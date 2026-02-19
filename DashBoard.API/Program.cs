@@ -16,9 +16,11 @@ var builder = WebApplication.CreateBuilder(args);
 // ========================================
 
 var useSqlServer = builder.Configuration.GetValue<bool>("DatabaseSettings:UseSqlServer");
-var sqliteConnection = builder.Configuration.GetConnectionString("SqliteConnection") ?? "Data Source=./Database/dashboard.db";
+var sqliteConnection = builder.Configuration.GetConnectionString("SqliteConnection")
+    ?? "Data Source=./Database/dashboard.db";
 var sqlServerConnection = builder.Configuration.GetConnectionString("SqlServerConnection");
-var databasePath = builder.Configuration.GetValue<string>("DatabaseSettings:DatabasePath") ?? "./Database";
+var databasePath = builder.Configuration.GetValue<string>("DatabaseSettings:DatabasePath")
+    ?? "./Database";
 
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
 {
@@ -29,11 +31,10 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
     }
     else
     {
-        // Crear carpeta de base de datos si no existe
-        var fullPath = Path.IsPathRooted(databasePath) 
-            ? databasePath 
+        var fullPath = Path.IsPathRooted(databasePath)
+            ? databasePath
             : Path.Combine(Directory.GetCurrentDirectory(), databasePath);
-            
+
         if (!Directory.Exists(fullPath))
         {
             Directory.CreateDirectory(fullPath);
@@ -46,32 +47,37 @@ builder.Services.AddDbContext<ApplicationDbContext>(options =>
 });
 
 // ========================================
-// CONFIGURACIÓN DE PAYLOADS GRANDES (SIN LÍMITES)
+// CONFIGURACIÓN DE PAYLOADS GRANDES
 // ========================================
 
 builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
 {
     options.ValueLengthLimit = int.MaxValue;
-    options.MultipartBodyLengthLimit = long.MaxValue; // Sin límite práctico
+    options.MultipartBodyLengthLimit = long.MaxValue;
     options.MemoryBufferThreshold = int.MaxValue;
 });
 
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
-        options.JsonSerializerOptions.MaxDepth = 128; // Más profundidad para objetos anidados
-        options.JsonSerializerOptions.DefaultBufferSize = 64 * 1024 * 1024; // 64MB buffer
+        options.JsonSerializerOptions.MaxDepth = 128;
+        options.JsonSerializerOptions.DefaultBufferSize = 64 * 1024 * 1024; // 64MB
         options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
     });
 
-builder.WebHost.ConfigureKestrel(serverOptions =>
+// ✅ CORREGIDO: Kestrel solo se configura cuando NO corre bajo IIS
+//    En IIS (inprocess) esta configuración causaba el crash.
+if (!builder.Environment.IsEnvironment("Production"))
 {
-    serverOptions.Limits.MaxRequestBodySize = null; // Sin límite
-    serverOptions.Limits.MinRequestBodyDataRate = null;
-    serverOptions.Limits.MinResponseDataRate = null;
-    serverOptions.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(5);
-    serverOptions.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(5);
-});
+    builder.WebHost.ConfigureKestrel(serverOptions =>
+    {
+        serverOptions.Limits.MaxRequestBodySize = null;
+        serverOptions.Limits.MinRequestBodyDataRate = null;
+        serverOptions.Limits.MinResponseDataRate = null;
+        serverOptions.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(5);
+        serverOptions.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(5);
+    });
+}
 
 // ========================================
 // AUTOMAPPER
@@ -84,7 +90,8 @@ builder.Services.AddAutoMapper(typeof(MappingProfile));
 // ========================================
 
 var jwtSettings = builder.Configuration.GetSection("JwtSettings");
-var secretKey = jwtSettings["SecretKey"] ?? throw new InvalidOperationException("JWT SecretKey no configurada");
+var secretKey = jwtSettings["SecretKey"]
+    ?? throw new InvalidOperationException("JWT SecretKey no configurada");
 
 builder.Services.AddAuthentication(options =>
 {
@@ -113,7 +120,9 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() 
+        var allowedOrigins = builder.Configuration
+            .GetSection("Cors:AllowedOrigins")
+            .Get<string[]>()
             ?? new[] { "http://localhost:5500" };
 
         policy.WithOrigins(allowedOrigins)
@@ -133,7 +142,7 @@ builder.Services.AddScoped<IUsuarioService, UsuarioService>();
 builder.Services.AddScoped<IAnalisisService, AnalisisService>();
 
 // ========================================
-// SWAGGER
+// SWAGGER — siempre habilitado (Development y Production)
 // ========================================
 
 builder.Services.AddEndpointsApiExplorer();
@@ -153,11 +162,12 @@ builder.Services.AddSwaggerGen(c =>
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization. Ejemplo: \"Bearer {token}\"",
+        Description = "JWT Authorization. Ingrese solo el token (sin escribir 'Bearer')",
         Name = "Authorization",
         In = ParameterLocation.Header,
-        Type = SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT"
     });
 
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
@@ -168,7 +178,7 @@ builder.Services.AddSwaggerGen(c =>
                 Reference = new OpenApiReference
                 {
                     Type = ReferenceType.SecurityScheme,
-                    Id = "Bearer"
+                    Id   = "Bearer"
                 }
             },
             Array.Empty<string>()
@@ -191,26 +201,22 @@ using (var scope = app.Services.CreateScope())
 
         Console.WriteLine("🔄 Inicializando base de datos...");
 
-        // Crear la base de datos si no existe
         if (context.Database.EnsureCreated())
         {
             Console.WriteLine("✅ Base de datos creada exitosamente");
-            Console.WriteLine("✅ Tablas creadas: Usuarios, Analisis");
-            Console.WriteLine("✅ Usuario Admin insertado");
         }
         else
         {
             Console.WriteLine("ℹ️  Base de datos ya existe");
         }
 
-        // Verificar que el usuario Admin existe
         var adminExists = context.Usuarios.Any(u => u.Username == "Admin");
         if (!adminExists)
         {
             Console.WriteLine("⚠️  Usuario Admin no encontrado, creando...");
             var adminId = Guid.Parse("11111111-1111-1111-1111-111111111111");
             var hashedPassword = BCrypt.Net.BCrypt.HashPassword("123456");
-            
+
             context.Usuarios.Add(new DashBoard.Core.Entities.Usuario
             {
                 Id = adminId,
@@ -221,7 +227,7 @@ using (var scope = app.Services.CreateScope())
                 Activo = true,
                 FechaCreacion = DateTime.UtcNow
             });
-            
+
             context.SaveChanges();
             Console.WriteLine("✅ Usuario Admin creado");
         }
@@ -232,7 +238,6 @@ using (var scope = app.Services.CreateScope())
     {
         Console.WriteLine($"❌ Error al inicializar base de datos: {ex.Message}");
         Console.WriteLine($"   Detalle: {ex.InnerException?.Message}");
-        Console.WriteLine($"   Stack: {ex.StackTrace}");
     }
 }
 
@@ -240,17 +245,19 @@ using (var scope = app.Services.CreateScope())
 // MIDDLEWARE
 // ========================================
 
-if (app.Environment.IsDevelopment())
+// ✅ CORREGIDO: Swagger siempre activo (no solo en Development)
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
-    {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "DashBoard API v1");
-        c.RoutePrefix = string.Empty;
-    });
-}
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "DashBoard API v1");
+    c.RoutePrefix = string.Empty;   // Swagger en la raíz: http://localhost:3030
+    c.DocumentTitle = "DashBoard API";
+});
 
-app.UseHttpsRedirection();
+// ✅ CORREGIDO: SIN UseHttpsRedirection — IIS ya maneja HTTPS
+//    Esta línea causaba el crash al arrancar bajo IIS inprocess
+// app.UseHttpsRedirection();  ← ELIMINADA
+
 app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseAuthorization();
@@ -262,7 +269,7 @@ Console.WriteLine("🚀 DashBoard API Iniciada");
 Console.WriteLine("════════════════════════════════════════════");
 Console.WriteLine($"📁 Base de datos: {(useSqlServer ? "SQL Server" : "SQLite")}");
 Console.WriteLine($"🔐 JWT Issuer: {jwtSettings["Issuer"]}");
-Console.WriteLine($"📖 Swagger: {(app.Environment.IsDevelopment() ? "Habilitado en /" : "Deshabilitado")}");
+Console.WriteLine($"📖 Swagger: habilitado en /");
 Console.WriteLine("════════════════════════════════════════════");
 Console.WriteLine("");
 Console.WriteLine("👤 Usuario por defecto:");
